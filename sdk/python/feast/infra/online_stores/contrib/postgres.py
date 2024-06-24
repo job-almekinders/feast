@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import datetime
 from typing import (
     Any,
+    AsyncGenerator,
     Callable,
     Dict,
     Generator,
@@ -16,16 +17,20 @@ from typing import (
 )
 
 import pytz
-from psycopg import sql
+from psycopg import AsyncConnection, sql
 from psycopg.connection import Connection
 from psycopg.rows import Row
-from psycopg_pool import ConnectionPool
+from psycopg_pool import AsyncConnectionPool, ConnectionPool
 
 from feast import Entity
 from feast.feature_view import FeatureView
 from feast.infra.key_encoding_utils import get_list_val_str, serialize_entity_key
 from feast.infra.online_stores.online_store import OnlineStore
-from feast.infra.utils.postgres.connection_utils import _get_conn, _get_connection_pool
+from feast.infra.utils.postgres.connection_utils import (
+    _get_conn,
+    _get_connection_pool,
+    _get_connection_pool_async,
+)
 from feast.infra.utils.postgres.postgres_config import ConnectionType, PostgreSQLConfig
 from feast.protos.feast.types.EntityKey_pb2 import EntityKey as EntityKeyProto
 from feast.protos.feast.types.Value_pb2 import Value as ValueProto
@@ -52,6 +57,7 @@ class PostgreSQLOnlineStoreConfig(PostgreSQLConfig):
 class PostgreSQLOnlineStore(OnlineStore):
     _conn: Optional[Connection] = None
     _conn_pool: Optional[ConnectionPool] = None
+    _conn_pool_async: Optional[AsyncConnectionPool] = None
 
     @contextlib.contextmanager
     def _get_conn(self, config: RepoConfig) -> Generator[Connection, Any, Any]:
@@ -68,6 +74,19 @@ class PostgreSQLOnlineStore(OnlineStore):
             if not self._conn:
                 self._conn = _get_conn(config.online_store)
             yield self._conn
+
+    @contextlib.asynccontextmanager
+    async def _get_conn_async(
+        self, config: RepoConfig
+    ) -> AsyncGenerator[AsyncConnection, Any]:
+        if not self._conn_pool_async:
+            self._conn_pool_async = await _get_connection_pool_async(
+                config.online_store
+            )
+            await self._conn_pool_async.open()
+        connection = await self._conn_pool_async.getconn()
+        yield connection
+        await self._conn_pool_async.putconn(connection)
 
     def online_write_batch(
         self,
@@ -160,7 +179,7 @@ class PostgreSQLOnlineStore(OnlineStore):
             config, table, keys, requested_features
         )
 
-        async with await self.get_conn(config) as conn:
+        async with self._get_conn_async(config) as conn:
             async with conn.cursor() as cur:
                 await cur.execute(query, params)
                 rows = await cur.fetchall()
