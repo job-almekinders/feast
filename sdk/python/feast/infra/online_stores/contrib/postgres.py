@@ -19,7 +19,6 @@ from typing import (
 import pytz
 from psycopg import AsyncConnection, sql
 from psycopg.connection import Connection
-from psycopg.rows import Row
 from psycopg_pool import AsyncConnectionPool, ConnectionPool
 
 from feast import Entity
@@ -221,8 +220,7 @@ class PostgreSQLOnlineStore(OnlineStore):
             ).format(
                 sql.Identifier(_table_id(config.project, table)),
             )
-            params = (keys,)
-
+            params = (keys, [])
         return query, params
 
     @staticmethod
@@ -240,8 +238,7 @@ class PostgreSQLOnlineStore(OnlineStore):
 
     @staticmethod
     def _process_rows(
-        keys: List[bytes],
-        rows: List[Row],
+        keys: List[bytes], rows: List[Tuple]
     ) -> List[Tuple[Optional[datetime], Optional[Dict[str, ValueProto]]]]:
         """Transform the retrieved rows in the desired output.
 
@@ -255,7 +252,7 @@ class PostgreSQLOnlineStore(OnlineStore):
                 row[0] if isinstance(row[0], bytes) else row[0].tobytes()
             ].append(row[1:])
 
-        result = []
+        result: List[Tuple[Optional[datetime], Optional[Dict[str, ValueProto]]]] = []
         for key in keys:
             if key in values_dict:
                 value = values_dict[key]
