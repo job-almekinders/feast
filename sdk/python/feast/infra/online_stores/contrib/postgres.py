@@ -28,6 +28,7 @@ from feast.infra.key_encoding_utils import get_list_val_str, serialize_entity_ke
 from feast.infra.online_stores.online_store import OnlineStore
 from feast.infra.utils.postgres.connection_utils import (
     _get_conn,
+    _get_conn_async,
     _get_connection_pool,
     _get_connection_pool_async,
 )
@@ -57,6 +58,8 @@ class PostgreSQLOnlineStoreConfig(PostgreSQLConfig):
 class PostgreSQLOnlineStore(OnlineStore):
     _conn: Optional[Connection] = None
     _conn_pool: Optional[ConnectionPool] = None
+
+    _conn_async: Optional[AsyncConnection] = None
     _conn_pool_async: Optional[AsyncConnectionPool] = None
 
     @contextlib.contextmanager
@@ -79,14 +82,19 @@ class PostgreSQLOnlineStore(OnlineStore):
     async def _get_conn_async(
         self, config: RepoConfig
     ) -> AsyncGenerator[AsyncConnection, Any]:
-        if not self._conn_pool_async:
-            self._conn_pool_async = await _get_connection_pool_async(
-                config.online_store
-            )
-            await self._conn_pool_async.open()
-        connection = await self._conn_pool_async.getconn()
-        yield connection
-        await self._conn_pool_async.putconn(connection)
+        if config.online_store.conn_type == ConnectionType.pool:
+            if not self._conn_pool_async:
+                self._conn_pool_async = await _get_connection_pool_async(
+                    config.online_store
+                )
+                await self._conn_pool_async.open()
+            connection = await self._conn_pool_async.getconn()
+            yield connection
+            await self._conn_pool_async.putconn(connection)
+        else:
+            if not self._conn_async:
+                self._conn_async = await _get_conn_async(config.online_store)
+            yield self._conn_async
 
     def online_write_batch(
         self,
