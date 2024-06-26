@@ -205,7 +205,7 @@ class PostgreSQLOnlineStore(OnlineStore):
             query = sql.SQL(
                 """
                 SELECT entity_key, feature_name, value, event_ts
-                FROM {} WHERE entity_key = ANY(%s) and feature_name = ANY(%s);
+                FROM {} WHERE entity_key = ANY(%s) AND feature_name = ANY(%s);
                 """
             ).format(
                 sql.Identifier(_table_id(config.project, table)),
