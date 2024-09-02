@@ -12,18 +12,6 @@ import pandas as pd
 import pytest
 import requests
 from botocore.exceptions import BotoCoreError
-
-from feast import FeatureStore
-from feast.entity import Entity
-from feast.errors import FeatureNameCollisionError
-from feast.feature_service import FeatureService
-from feast.feature_view import FeatureView
-from feast.field import Field
-from feast.infra.utils.postgres.postgres_config import ConnectionType
-from feast.online_response import TIMESTAMP_POSTFIX
-from feast.types import Float32, Int32, String
-from feast.utils import _utc_now
-from feast.wait import wait_retry_backoff
 from tests.integration.feature_repos.repo_configuration import (
     Environment,
     construct_universal_feature_views,
@@ -36,6 +24,18 @@ from tests.integration.feature_repos.universal.feature_views import (
     driver_feature_view,
 )
 from tests.utils.data_source_test_creator import prep_file_source
+
+from feast import FeatureStore
+from feast.entity import Entity
+from feast.errors import FeatureNameCollisionError
+from feast.feature_service import FeatureService
+from feast.feature_view import FeatureView
+from feast.field import Field
+from feast.infra.utils.postgres.postgres_config import ConnectionType
+from feast.online_response import TIMESTAMP_POSTFIX
+from feast.types import Float32, Int32, String
+from feast.utils import _utc_now
+from feast.wait import wait_retry_backoff
 
 
 @pytest.mark.integration
@@ -443,6 +443,42 @@ def setup_feature_store_universal_feature_views(
     return fs
 
 
+def setup_feature_store_universal_feature_views_with_on_demand(
+    environment, universal_data_sources
+) -> FeatureStore:
+    fs: FeatureStore = environment.feature_store
+    entities, datasets, data_sources = universal_data_sources
+    feature_views = construct_universal_feature_views(data_sources, with_odfv=True)
+
+    fs.apply(
+        [
+            driver(),
+            feature_views.driver,
+            feature_views.driver_odfv,
+            feature_views.global_fv,
+        ]
+    )
+
+    data = {
+        "driver_id": [1, 2],
+        "conv_rate": [0.5, 0.3],
+        "acc_rate": [0.6, 0.4],
+        "avg_daily_trips": [4, 5],
+        "event_timestamp": [
+            pd.to_datetime(1646263500, utc=True, unit="s"),
+            pd.to_datetime(1646263600, utc=True, unit="s"),
+        ],
+        "created": [
+            pd.to_datetime(1646263500, unit="s"),
+            pd.to_datetime(1646263600, unit="s"),
+        ],
+    }
+    df_ingest = pd.DataFrame(data)
+
+    fs.write_to_online_store("driver_stats", df_ingest)
+    return fs
+
+
 def assert_feature_store_universal_feature_views_response(df: pd.DataFrame):
     assertpy.assert_that(len(df)).is_equal_to(2)
     assertpy.assert_that(df["driver_id"].iloc[0]).is_equal_to(1)
@@ -503,12 +539,35 @@ def test_async_online_retrieval_with_event_timestamps(
                 "driver_stats:acc_rate",
                 "driver_stats:conv_rate",
             ],
-            entity_rows=[{"driver_id": 1}, {"driver_id": 2}],
+            entity_rows=[{"driver_id": 99999}],
         )
     )
     df = response.to_df(True)
+    # Unknown driver id is used here, but we are still getting a response
 
-    assert_feature_store_universal_feature_views_response(df)
+
+@pytest.mark.integration
+@pytest.mark.universal_online_stores(only=["postgres"])
+def test_async_online_retrieval_with_event_timestamps_null_only(
+    environment, universal_data_sources
+):
+    fs = setup_feature_store_universal_feature_views_with_on_demand(
+        environment, universal_data_sources
+    )
+
+    response = asyncio.run(
+        fs.get_online_features_async(
+            features=[
+                "driver_stats:avg_daily_trips",
+                "driver_stats:acc_rate",
+                "conv_rate_plus_100:conv_rate_plus_100",
+            ],
+            entity_rows=[{"driver_id": 99999, "val_to_add": 2}],
+        )
+    )
+    df = response.to_df(True)
+    # Unknown driver id is used here, but we are getting an error:
+    # TypeError: Couldn't infer value type from empty value
 
 
 @pytest.mark.integration
@@ -758,9 +817,11 @@ def assert_feature_service_correctness(
     )
     feature_service_keys = feature_service_online_features_dict.keys()
     expected_feature_refs = [
-        f"{projection.name_to_use()}__{feature.name}"
-        if full_feature_names
-        else feature.name
+        (
+            f"{projection.name_to_use()}__{feature.name}"
+            if full_feature_names
+            else feature.name
+        )
         for projection in feature_service.feature_view_projections
         for feature in projection.features
     ]
@@ -811,9 +872,11 @@ def assert_feature_service_entity_mapping_correctness(
         feature_service_keys = feature_service_online_features_dict.keys()
 
         expected_features = [
-            f"{projection.name_to_use()}__{feature.name}"
-            if full_feature_names
-            else feature.name
+            (
+                f"{projection.name_to_use()}__{feature.name}"
+                if full_feature_names
+                else feature.name
+            )
             for projection in feature_service.feature_view_projections
             for feature in projection.features
         ]

@@ -467,6 +467,7 @@ def _augment_response_with_on_demand_transforms(
 
         proto_values = []
         for selected_feature in selected_subset:
+            # breakpoint()
             feature_vector = transformed_features[selected_feature]
             proto_values.append(
                 python_values_to_proto_values(feature_vector, ValueType.UNKNOWN)

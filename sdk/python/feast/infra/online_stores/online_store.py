@@ -271,6 +271,7 @@ class OnlineStore(ABC):
             )
 
         if requested_on_demand_feature_views:
+            # breakpoint()
             utils._augment_response_with_on_demand_transforms(
                 online_features_response,
                 feature_refs,
